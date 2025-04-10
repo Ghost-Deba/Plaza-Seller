@@ -1,7 +1,11 @@
 --======= [الوظائف المساعدة] =======--
 local function FormatNumber(n)
-    n = tonumber(n) or 0 -- الإصلاح هنا
-    return tostring(math.floor(n)):reverse():gsub("%d%d%d", "%1,", 0):reverse():gsub("^,", "")
+    n = tonumber(n) or 0
+    return tostring(math.floor(n))
+        :reverse()
+        :gsub("%d%d%d", "%1,")
+        :reverse()
+        :gsub("^,", "")
 end
 
 local function GetItemImage(itemId)
@@ -66,7 +70,7 @@ if Config.AntiAFK then
     local VirtualUser = game:GetService("VirtualUser")
     LocalPlayer.Idled:Connect(function()
         VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
+        VirtualUser:ClickButton2(Vector2.new(math.random(), math.random()))
     end)
 end
 
@@ -78,7 +82,7 @@ end
 
 local function SmartTravel()
     if CheckLocation() and game.PlaceId == 8737899170 then
-        for i = 1, 3 do -- 3 محاولات كحد أقصى
+        for i = 1, 3 do
             local success = pcall(Network.Invoke, "Travel to Trading Plaza")
             if success then
                 repeat task.wait(1) until game.PlaceId == 16498369169
@@ -94,7 +98,7 @@ end
 local function ClaimBooth()
     local BoothSpawns = workspace.TradingPlaza.BoothSpawns:GetChildren()
     if #BoothSpawns > 0 then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = BoothSpawns[1].Table.CFrame * CFrame.new(0, 5, 0)
+        LocalPlayer.Character:SetPrimaryPartCFrame(BoothSpawns[1].Table.CFrame * CFrame.new(0, 5, 0))
         Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns[1]:GetAttribute("ID")))
     end
 end
@@ -139,7 +143,7 @@ while task.wait(Config.SellInterval) do
                 uuid = uuid,
                 data = itemData,
                 config = config,
-                rap = RAPCmds.Get(Item)
+                rap = RAPCmds.Get(Item) or 0
             })
         end
     end
