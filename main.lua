@@ -14,13 +14,13 @@ local function SendWebhook(itemName, price, sold, remaining, diamonds, itemId)
     if not Config.Webhook.Enable or not Config.Webhook.URL then return end
     
     local embed = {
-        title = "💰 عملية بيع ناجحة!",
+        title = "💰 تم البيع بنجاح!",
         description = string.format(
-            "**اسم العنصر:** `%s`\n"..
+            "**الاسم:** %s\n"..
             "**السعر:** %s 💎\n"..
-            "**تم بيع:** %sx\n"..
-            "**المتبقي:** %sx\n\n"..
-            "**رصيد الدايموند:** %s 💎",
+            "**المباع:** %sx\n"..
+            "**المتبقي:** %sx\n"..
+            "**الدايموند:** %s 💎",
             itemName,
             FormatNumber(price),
             FormatNumber(sold),
@@ -35,30 +35,30 @@ local function SendWebhook(itemName, price, sold, remaining, diamonds, itemId)
         }
     }
     
-    local data = {
-        content = Config.Webhook.PingOnSale and ("<@&"..Config.Webhook.PingRoleID..">") or nil,
-        embeds = {embed},
-        username = "Ghosty Seller Bot",
-        avatar_url = "https://i.imgur.com/xyz789.png"
-    }
-    
     pcall(function()
         syn.request({
             Url = Config.Webhook.URL,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
-            Body = game:GetService("HttpService"):JSONEncode(data)
+            Body = game:GetService("HttpService"):JSONEncode({
+                content = Config.Webhook.PingOnSale and ("<@&"..Config.Webhook.PingRoleID..">") or nil,
+                embeds = {embed},
+                username = "Ghosty Seller"
+            })
         })
     end)
 end
 
---======= [تهيئة اللعبة] =======--
+--======= [التهيئة] =======--
 repeat task.wait() until game:IsLoaded()
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+repeat task.wait() until LocalPlayer.PlayerGui:FindFirstChild("__INVENTORY")
+
 local Library = game:GetService("ReplicatedStorage").Library
 local Network = require(Library.Client.Network)
 local Savemod = require(Library.Client.Save)
+local RAPCmds = require(Library.Client.RAPCmds)
 
 --======= [منع AFK] =======--
 if Config.AntiAFK then
@@ -69,71 +69,106 @@ if Config.AntiAFK then
     end)
 end
 
---======= [الانتقال للساحة] =======--
-if Config.AutoTravelToPlaza then
-    while true do
-        Network.Invoke("Travel to Trading Plaza")
-        task.wait(3)
+--======= [نظام السفر الذكي] =======--
+local function CheckLocation()
+    local AllowedPlaces = {8737899170, 16498369169}
+    return table.find(AllowedPlaces, game.PlaceId)
+end
+
+local function SmartTravel()
+    if CheckLocation() and game.PlaceId == 8737899170 then
+        for i = 1, 3 do -- 3 محاولات كحد أقصى
+            local success = pcall(Network.Invoke, "Travel to Trading Plaza")
+            if success then
+                repeat task.wait(1) until game.PlaceId == 16498369169
+                return true
+            end
+            task.wait(math.random(2,4))
+        end
     end
+    return false
 end
 
 --======= [حجز الكشك] =======--
 local function ClaimBooth()
-    local BoothSpawns = workspace.TradingPlaza.BoothSpawns:GetChildren()[1]
-    LocalPlayer.Character.HumanoidRootPart.CFrame = BoothSpawns.Table.CFrame * CFrame.new(0, 5, 0)
-    Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns:GetAttribute("ID")))
+    local BoothSpawns = workspace.TradingPlaza.BoothSpawns:GetChildren()
+    if #BoothSpawns > 0 then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = BoothSpawns[1].Table.CFrame * CFrame.new(0, 5, 0)
+        Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns[1]:GetAttribute("ID")))
+    end
 end
 
-repeat ClaimBooth() task.wait(1) until workspace.__THINGS.Booths:FindFirstChild(LocalPlayer.Name)
+--======= [النظام الرئيسي] =======--
+task.spawn(function()
+    while true do
+        if Config.AutoTravelToPlaza and game.PlaceId ~= 16498369169 then
+            SmartTravel()
+        end
+        
+        if game.PlaceId == 16498369169 then
+            if not workspace.__THINGS.Booths:FindFirstChild(LocalPlayer.Name) then
+                ClaimBooth()
+            else
+                break
+            end
+        end
+        
+        task.wait(5)
+    end
+end)
 
---======= [نظام البيع الرئيسي] =======--
+--======= [نظام البيع] =======--
 while task.wait(Config.SellInterval) do
     local Inventory = Savemod.Get().Inventory
-    local Diamonds = Savemod.Get().Diamonds
+    local Diamonds = Savemod.Get().Diamonds or 0
     
     local itemsToSell = {}
     for _, config in ipairs(Config.Items) do
-        for uuid, itemData in pairs(Inventory[config.Class] or {}) do
-            local ItemClass = require(Library.Items[config.Class.."Item"])
-            local Item = ItemClass.new(itemData.id)
+        local classItems = Inventory[config.Class] or {}
+        for uuid, itemData in pairs(classItems) do
+            local Item = require(Library.Items[config.Class.."Item"])(itemData.id)
+            local isMatch = true
             
-            -- فلترة العناصر
-            if Item.name == config.item then
-                if config.PowerType and itemData.pt ~= config.PowerType then continue end
-                if config.Shiny and not itemData.sh then continue end
-                
-                table.insert(itemsToSell, {
-                    uuid = uuid,
-                    data = itemData,
-                    config = config
-                })
-            end
+            -- الفلترة
+            if Item.name ~= config.item then continue end
+            if config.PowerType and itemData.pt ~= config.PowerType then continue end
+            if config.Shiny and not itemData.sh then continue end
+            
+            table.insert(itemsToSell, {
+                uuid = uuid,
+                data = itemData,
+                config = config,
+                rap = RAPCmds.Get(Item)
+            })
         end
     end
     
-    -- فرز العناصر حسب القيمة
+    -- الفرز حسب القيمة
     table.sort(itemsToSell, function(a,b)
-        return RAPCmds.Get(a.Item) > RAPCmds.Get(b.Item)
+        return a.rap > b.rap
     end)
     
-    -- بدء البيع
+    -- البيع
     for _, item in ipairs(itemsToSell) do
-        local MaxPrice = item.config.MaxPrice
-        local RAP = RAPCmds.Get(Item)
-        local Price = type(MaxPrice) == "string" and (RAP * tonumber(MaxPrice:gsub("%%",""))/100) or math.min(MaxPrice, RAP * 2)
-        local MaxAmount = math.min(item.data._am or 1, math.floor(25e9 / Price))
+        local price = item.config.MaxPrice
+        if type(price) == "string" then
+            price = item.rap * (tonumber(price:gsub("%%",""))/100
+        end
+        price = math.floor(math.min(price, item.rap * 1.5))
         
-        if MaxAmount > 0 then
-            Network.Invoke("Booths_CreateListing", item.uuid, Price, MaxAmount)
+        local maxAmount = math.min(item.data._am or 1, math.floor(25e9 / price))
+        
+        if maxAmount > 0 then
+            Network.Invoke("Booths_CreateListing", item.uuid, price, maxAmount)
             SendWebhook(
                 item.config.item,
-                Price,
-                MaxAmount,
-                (item.data._am or 1) - MaxAmount,
+                price,
+                maxAmount,
+                (item.data._am or 1) - maxAmount,
                 Diamonds,
                 item.data.id
             )
             task.wait(1)
         end
     end
-end
+    end
