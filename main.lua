@@ -69,7 +69,7 @@ local function SendWebhook(itemName, price, amount, remaining, playerName, diamo
                 ["url"] = thumbnailUrl
             },
             ["footer"] = {
-                ["text"] = "Ｇんｏｓｔ • Seller",
+                ["text"] = "Ｇんｏｓｔ • Tracker",
                 ["icon_url"] = FOOTER_ICON
             },
             ["timestamp"] = DateTime.now():ToIsoDate()
@@ -124,16 +124,65 @@ end
 
 -- ========== TRAVEL TO TRADING PLAZA ==========
 if Config.AutoTravelToPlaza and (game.PlaceId == 8737899170 or game.PlaceId == 16498369169) then
-    while true do 
-        Network.Invoke("Travel to Trading Plaza") 
-        task.wait(1) 
+    local traveled = false
+    for i = 1, 5 do  -- 5 محاولات كحد أقصى
+        local success, err = pcall(function()
+            Network.Invoke("Travel to Trading Plaza")
+        end)
+        if success then
+            traveled = true
+            break
+        else
+            warn("Failed to travel to plaza (attempt "..i.."):", err)
+            task.wait(2)
+        end
     end
+    if not traveled then
+        error("Failed to travel to Trading Plaza after 5 attempts")
+    end
+    task.wait(5)  -- انتظر 5 ثوانٍ بعد السفر
 end
 
 -- ========== CLAIM BOOTH ==========
+local function FindTradingPlaza()
+    local possibleNames = {"TradingPlaza", "Trade Plaza", "Plaza", "Trading Hub"}
+    for _, name in ipairs(possibleNames) do
+        local plaza = workspace:FindFirstChild(name)
+        if plaza and plaza:FindFirstChild("BoothSpawns") then
+            return plaza
+        end
+    end
+    return nil
+end
+
 local HaveBooth = false
-while not HaveBooth do 
-    local BoothSpawns = game.workspace.TradingPlaza.BoothSpawns:FindFirstChildWhichIsA("Model")
+local startTime = os.time()
+local boothClaimAttempts = 0
+
+while not HaveBooth and os.time() - startTime < 60 do  -- 60 ثانية كحد أقصى
+    local tradingPlaza = FindTradingPlaza()
+    
+    if not tradingPlaza then
+        warn("Trading Plaza not found in workspace. Waiting...")
+        task.wait(3)
+        continue
+    end
+
+    local BoothSpawns = tradingPlaza:FindFirstChild("BoothSpawns")
+    if not BoothSpawns then
+        warn("BoothSpawns not found in Trading Plaza. Waiting...")
+        task.wait(3)
+        continue
+    end
+
+    BoothSpawns = BoothSpawns:FindFirstChildWhichIsA("Model")
+    if not BoothSpawns then
+        warn("No available booth spawns found. Waiting...")
+        task.wait(3)
+        continue
+    end
+
+    -- البحث عن كشك موجود
     for _, Booth in ipairs(workspace.__THINGS.Booths:GetChildren()) do
         if Booth:IsA("Model") and Booth.Info.BoothBottom.Frame.Top.Text == LocalPlayer.DisplayName .. "'s Booth!" then
             HaveBooth = true
@@ -141,10 +190,33 @@ while not HaveBooth do
             break
         end
     end
+    
+    -- إذا لم يتم العثور على كشك، احصل على واحد جديد
     if not HaveBooth then
         LocalPlayer.Character.HumanoidRootPart.CFrame = BoothSpawns.Table.CFrame * CFrame.new(5, 0, 0)
-        Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns:GetAttribute("ID")))
+        
+        boothClaimAttempts = boothClaimAttempts + 1
+        if boothClaimAttempts > 5 then
+            warn("Too many booth claim attempts. Waiting before retrying...")
+            task.wait(5)
+            boothClaimAttempts = 0
+        end
+        
+        local success, err = pcall(function()
+            Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns:GetAttribute("ID")))
+        end)
+        
+        if not success then
+            warn("Error claiming booth:", err)
+        end
+        
+        task.wait(2)
     end
+end
+
+if not HaveBooth then
+    error("Failed to get a booth after 60 seconds")
+    return
 end
 
 -- ========== ANTI-AFK SYSTEM ==========
@@ -220,17 +292,33 @@ while task.wait(Config.SellInterval) do
         local itemId = item.itemData.id
         
         if item.isExclusive and exclusiveListed < 1 then
-            Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
-            SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
-            exclusiveListed = exclusiveListed + 1
-            totalListed = totalListed + 1
+            local success, err = pcall(function()
+                Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
+            end)
+            
+            if success then
+                SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
+                exclusiveListed = exclusiveListed + 1
+                totalListed = totalListed + 1
+            else
+                warn("Failed to list exclusive item:", err)
+            end
+            
             task.wait(1)
         elseif not item.isExclusive then
-            Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
-            if amount >= 10000 then
-                SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
+            local success, err = pcall(function()
+                Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
+            end)
+            
+            if success then
+                if amount >= 10000 then
+                    SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
+                end
+                totalListed = totalListed + 1
+            else
+                warn("Failed to list normal item:", err)
             end
-            totalListed = totalListed + 1
+            
             task.wait(1)
         end
     end
