@@ -1,6 +1,7 @@
 --======= [الوظائف المساعدة] =======--
 local function FormatNumber(n)
-    return tostring(n):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
+    n = tonumber(n) or 0 -- الإصلاح هنا
+    return tostring(math.floor(n)):reverse():gsub("%d%d%d", "%1,", 0):reverse():gsub("^,", "")
 end
 
 local function GetItemImage(itemId)
