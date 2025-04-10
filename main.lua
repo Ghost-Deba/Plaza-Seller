@@ -1,18 +1,36 @@
 --[[
-  Pet Simulator 99 Auto Seller for Huge Pets
-  Version 3.2 - Optimized for Huge Pets
+  Pet Simulator 99 Auto Seller
+  Version 3.3 - Fixed Line 24 Error
 ]]
 
--- Wait for game to load
-repeat task.wait() until game:IsLoaded()
-local LocalPlayer = game:GetService("Players").LocalPlayer
-repeat task.wait() until not LocalPlayer.PlayerGui:FindFirstChild("__INTRO")
+-- Wait for game to load (Fixed version)
+local LocalPlayer
+while true do
+    pcall(function()
+        LocalPlayer = game:GetService("Players").LocalPlayer
+    end)
+    if LocalPlayer and game:IsLoaded() then break end
+    task.wait(1)
+end
 
--- Load configuration
+-- Wait for intro to complete (Fixed line 24)
+local maxWaitTime = 60 -- 60 ثانية كحد أقصى
+local startTime = os.time()
+while os.time() - startTime < maxWaitTime do
+    if LocalPlayer.PlayerGui:FindFirstChild("__INTRO") then
+        task.wait(1)
+    else
+        break
+    end
+end
+
+-- Verify configuration exists
 if not getgenv().Config then
     error("Configuration not found! Please load your config file first.")
     return
 end
+
+-- ... (بقية السكريتب تبقى كما هي مع التأكد من أن كل المراجع لـ LocalPlayer موجودة بعد التأكد من تحميلها)
 
 -- ========== CONSTANT SETTINGS ==========
 local CUSTOM_USERNAME = "Huge Seller"
