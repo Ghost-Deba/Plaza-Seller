@@ -1,13 +1,3 @@
---======= [الوظائف المساعدة] =======--
-local function FormatNumber(n)
-    n = tonumber(n) or 0
-    return tostring(math.floor(n))
-        :reverse()
-        :gsub("%d%d%d", "%1,")
-        :reverse()
-        :gsub("^,", "")
-end
-
 local function GetItemImage(itemId)
     local success, response = pcall(function()
         return game:HttpGet("https://thumbnails.roblox.com/v1/assets?assetIds="..itemId.."&size=420x420&format=Png")
