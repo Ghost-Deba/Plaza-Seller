@@ -1,7 +1,6 @@
 --[[
-  Pet Simulator 99 Auto Seller
-  Main Script (to be hosted on GitHub)
-  Version 2.1
+  Pet Simulator 99 Auto Seller for Huge Pets
+  Version 3.2 - Optimized for Huge Pets
 ]]
 
 -- Wait for game to load
@@ -9,19 +8,25 @@ repeat task.wait() until game:IsLoaded()
 local LocalPlayer = game:GetService("Players").LocalPlayer
 repeat task.wait() until not LocalPlayer.PlayerGui:FindFirstChild("__INTRO")
 
--- Verify configuration exists
+-- Load configuration
 if not getgenv().Config then
     error("Configuration not found! Please load your config file first.")
     return
 end
 
 -- ========== CONSTANT SETTINGS ==========
-local CUSTOM_USERNAME = "Seller"
-local CUSTOM_AVATAR = "https://cdn.discordapp.com/attachments/905256599906558012/1356371225714102324/IMG_1773.jpg"
-local FOOTER_ICON = "https://cdn.discordapp.com/attachments/905256599906558012/1356371225714102324/IMG_1773.jpg"
+local CUSTOM_USERNAME = "Huge Seller"
+local CUSTOM_AVATAR = "https://i.imgur.com/JW6QZ9y.png"
+local FOOTER_ICON = "https://i.imgur.com/JW6QZ9y.png"
 local DEFAULT_IMAGE = "https://i.imgur.com/JW6QZ9y.png"
+local MAX_ATTEMPTS = 5
+local RETRY_DELAY = 3
 
--- ========== REQUIRED LIBRARIES ==========
+-- ========== REQUIRED SERVICES ==========
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+
+-- ========== GAME LIBRARIES ==========
 local Library = game.ReplicatedStorage.Library
 local Client = Library.Client
 local RAPCmds = require(Client.RAPCmds)
@@ -31,213 +36,186 @@ local Savemod = require(Client.Save)
 -- ========== HELPER FUNCTIONS ==========
 local function GetItemImage(itemId)
     local thumbnailUrl = string.format("https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=%d", itemId)
-    
-    local success = pcall(function()
-        return game:GetService("HttpService"):GetAsync(string.format(
-            "https://www.roblox.com/Thumbs/Asset.ashx?width=100&height=100&assetId=%d",
-            itemId
-        ))
-    end)
-    
+    local success = pcall(function() return HttpService:GetAsync(thumbnailUrl) end)
     return success and thumbnailUrl or DEFAULT_IMAGE
 end
 
-local function SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
+local function SendWebhook(itemName, price, amount, playerName, diamonds, itemId)
     if not Config.Webhook.Enable or not Config.Webhook.URL then return end
-    
-    local ping = Config.Webhook.PingOnSale and (Config.Webhook.PingRoleID and "<@"..Config.Webhook.PingRoleID..">") or ""
-    local thumbnailUrl = GetItemImage(itemId)
     
     local data = {
         ["username"] = CUSTOM_USERNAME,
         ["avatar_url"] = CUSTOM_AVATAR,
-        ["content"] = ping,
         ["embeds"] = {{
-            ["title"] = "New Item Sold 🥳",
+            ["title"] = "🦍 Huge Pet Listed!",
             ["description"] = string.format(
-                "**Item Sold Info**\n"..
-                "> Item = %s\n"..
-                "> Value = %s\n"..
-                "> Amount = %d\n"..
-                "> In Inventory = %d\n\n"..
-                "**User Info**\n"..
-                "> Diamond = %s\n"..
-                "> Account = ||%s||",
+                "**📌 Item:** %s\n"..
+                "**💰 Price:** %s\n"..
+                "**👤 Seller:** ||%s||\n"..
+                "**💎 Diamonds:** %s",
                 itemName,
                 tostring(price),
-                amount,
-                remaining,
-                tostring(diamonds),
-                playerName
+                playerName,
+                tostring(diamonds)
             ),
-            ["color"] = 65280, -- Green color
-            ["thumbnail"] = {
-                ["url"] = thumbnailUrl
-            },
+            ["color"] = 16776960, -- Yellow
+            ["thumbnail"] = {["url"] = GetItemImage(itemId)},
             ["footer"] = {
-                ["text"] = "Ｇんｏｓｔ • Tracker",
+                ["text"] = "PS99 Huge Seller • "..os.date("%X"),
                 ["icon_url"] = FOOTER_ICON
-            },
-            ["timestamp"] = DateTime.now():ToIsoDate()
+            }
         }}
     }
     
-    local success, response = pcall(function()
-        return game:GetService("HttpService"):PostAsync(
+    pcall(function()
+        HttpService:PostAsync(
             Config.Webhook.URL,
-            game:GetService("HttpService"):JSONEncode(data),
+            HttpService:JSONEncode(data),
             {["Content-Type"] = "application/json"}
         )
     end)
-    
-    if not success then
-        warn("Failed to send webhook:", response)
-    end
 end
 
-local function IsExclusivePet(itemName)
-    return itemName:find("Huge") or itemName:find("Titanic")
-end
-
-local function IsMatchingItem(itemData, itemId, configItem)
-    local Item = require(Library.Items[configItem.Class .. "Item"])(itemId)
-    
-    if Item.name ~= configItem.item then
-        return false
-    end
-    
-    if configItem.PowerType ~= nil and itemData.pt ~= configItem.PowerType then
-        return false
-    end
-    
-    if configItem.Shiny ~= nil and (itemData.sh or false) ~= configItem.Shiny then
-        return false
-    end
-    
-    return true
-end
-
-local function GetRap(Class, ItemTable)
-    local Item = require(Library.Items[Class .. "Item"])(ItemTable.id)
-
-    if ItemTable.sh then Item:SetShiny(true) end
-    if ItemTable.pt == 1 then Item:SetGolden() end
-    if ItemTable.pt == 2 then Item:SetRainbow() end
-    if ItemTable.tn then Item:SetTier(ItemTable.tn) end
-
-    return RAPCmds.Get(Item) or 0
-end
-
--- ========== TRAVEL TO TRADING PLAZA ==========
-if Config.AutoTravelToPlaza and (game.PlaceId == 8737899170 or game.PlaceId == 16498369169) then
-    while true do 
-        Network.Invoke("Travel to Trading Plaza") 
-        task.wait(1) 
-    end
-end
-
--- ========== CLAIM BOOTH ==========
-local HaveBooth = false
-while not HaveBooth do 
-    local BoothSpawns = game.workspace.TradingPlaza.BoothSpawns:FindFirstChildWhichIsA("Model")
-    for _, Booth in ipairs(workspace.__THINGS.Booths:GetChildren()) do
-        if Booth:IsA("Model") and Booth.Info.BoothBottom.Frame.Top.Text == LocalPlayer.DisplayName .. "'s Booth!" then
-            HaveBooth = true
-            LocalPlayer.Character.HumanoidRootPart.CFrame = Booth.Table.CFrame * CFrame.new(5, 0, 0)
-            break
-        end
-    end
-    if not HaveBooth then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = BoothSpawns.Table.CFrame * CFrame.new(5, 0, 0)
-        Network.Invoke("Booths_ClaimBooth", tostring(BoothSpawns:GetAttribute("ID")))
-    end
-end
-
--- ========== ANTI-AFK SYSTEM ==========
-if Config.AntiAFK then
-    local VirtualUser = game:GetService("VirtualUser")
-    for _, v in pairs(getconnections(LocalPlayer.Idled)) do v:Disable() end
-    LocalPlayer.Idled:Connect(function()
-        VirtualUser:ClickButton2(Vector2.new(math.random(0, 1000), math.random(0, 1000))) 
-    end)
-    
-    old = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if not checkcaller() then
-            local Name = tostring(self)
-            if table.find({"Server Closing", "Idle Tracking: Update Timer", "Move Server"}, Name) then
-                return nil
+local function GetPlayerBooth()
+    for _, booth in ipairs(workspace.__THINGS.Booths:GetChildren()) do
+        if booth:IsA("Model") and booth:FindFirstChild("Info") then
+            local boothText = booth.Info.BoothBottom.Frame.Top.Text
+            if boothText:find(LocalPlayer.DisplayName) then
+                return booth
             end
         end
-        return old(self, ...)
-    end)
-    Network.Fire("Idle Tracking: Stop Timer")
+    end
+    return nil
 end
 
--- ========== MAIN SELLING SYSTEM ==========
-while task.wait(Config.SellInterval) do 
-    local inventory = Savemod.Get().Inventory
-    local playerData = Savemod.Get()
-    local diamonds = playerData.Diamonds or 0
-    local playerName = LocalPlayer.Name
-    local itemsToSell = {}
+-- ========== BOOTH SYSTEM ==========
+local function SetupBooth()
+    local attempts = 0
     
-    -- Collect matching items
-    for _, configItem in ipairs(Config.Items) do
-        local classItems = inventory[configItem.Class]
-        if classItems then
-            for uuid, itemData in pairs(classItems) do
-                if IsMatchingItem(itemData, itemData.id, configItem) then
-                    local isExclusive = configItem.IsExclusive or IsExclusivePet(configItem.item)
-                    local maxAmount = isExclusive and 1 or math.min(itemData._am or 1, 50000)
-                    
-                    table.insert(itemsToSell, {
-                        uuid = uuid,
-                        itemData = itemData,
-                        configItem = configItem,
-                        isExclusive = isExclusive,
-                        maxAmount = maxAmount
-                    })
+    while attempts < MAX_ATTEMPTS do
+        attempts = attempts + 1
+        
+        -- Check existing booth
+        local myBooth = GetPlayerBooth()
+        if myBooth then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = myBooth.Table.CFrame * CFrame.new(5, 0, 0)
+            return true
+        end
+        
+        -- Find available booth
+        local plaza = workspace:FindFirstChild("TradingPlaza") or workspace:FindFirstChild("Trade Plaza")
+        if plaza then
+            local boothSpawns = plaza:FindFirstChild("BoothSpawns")
+            if boothSpawns then
+                local spawn = boothSpawns:FindFirstChildWhichIsA("Model")
+                if spawn then
+                    LocalPlayer.Character.HumanoidRootPart.CFrame = spawn.Table.CFrame * CFrame.new(5, 0, 0)
+                    local success = pcall(function()
+                        Network.Invoke("Booths_ClaimBooth", tostring(spawn:GetAttribute("ID")))
+                    end)
+                    if success then return true end
                 end
             end
         end
+        
+        task.wait(RETRY_DELAY)
     end
     
-    -- Priority sorting (exclusives first)
-    table.sort(itemsToSell, function(a, b)
-        if a.isExclusive ~= b.isExclusive then
-            return a.isExclusive
-        else
-            return (a.itemData._am or 1) < (b.itemData._am or 1)
+    error("Failed to acquire booth after "..MAX_ATTEMPTS.." attempts")
+    return false
+end
+
+-- ========== SELLING SYSTEM ==========
+local function SellHugePets()
+    while task.wait(Config.SellInterval) do
+        -- Verify booth
+        if not GetPlayerBooth() then
+            warn("Booth lost! Re-attempting...")
+            if not SetupBooth() then break end
         end
-    end)
-    
-    -- Sell items with limits
-    local totalListed = 0
-    local exclusiveListed = 0
-    
-    for _, item in ipairs(itemsToSell) do
-        if totalListed >= 25 then break end
         
-        local itemName = item.configItem.item
-        local price = math.min(item.configItem.MaxPrice, GetRap(item.configItem.Class, item.itemData))
-        local amount = item.maxAmount
-        local remaining = (item.itemData._am or 1) - amount
-        local itemId = item.itemData.id
+        -- Get inventory
+        local inventory = Savemod.Get().Inventory
+        if not inventory.Pet then
+            warn("No pets found in inventory")
+            goto continue
+        end
         
-        if item.isExclusive and exclusiveListed < 1 then
-            Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
-            SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
-            exclusiveListed = exclusiveListed + 1
-            totalListed = totalListed + 1
-            task.wait(1)
-        elseif not item.isExclusive then
-            Network.Invoke("Booths_CreateListing", item.uuid, price, amount)
-            if amount >= 10000 then
-                SendWebhook(itemName, price, amount, remaining, playerName, diamonds, itemId)
+        -- Find matching huge pet
+        local hugePet = nil
+        for uuid, petData in pairs(inventory.Pet) do
+            local petName = require(Library.Items.PetItem)(petData.id).name
+            if petName == Config.Items[1].item then
+                hugePet = {
+                    uuid = uuid,
+                    data = petData,
+                    name = petName
+                }
+                break
             end
-            totalListed = totalListed + 1
-            task.wait(1)
         end
+        
+        if not hugePet then
+            warn("Huge pet not found:", Config.Items[1].item)
+            goto continue
+        end
+        
+        -- Sell the pet
+        local success, err = pcall(function()
+            Network.Invoke("Booths_CreateListing", 
+                hugePet.uuid, 
+                Config.Items[1].MaxPrice, 
+                1 -- Huge pets are always 1
+            )
+        end)
+        
+        if success then
+            print("✅ Listed:", hugePet.name, "for", Config.Items[1].MaxPrice)
+            if Config.Webhook.Enable then
+                SendWebhook(
+                    hugePet.name,
+                    Config.Items[1].MaxPrice,
+                    1,
+                    LocalPlayer.Name,
+                    Savemod.Get().Diamonds or 0,
+                    hugePet.data.id
+                )
+            end
+        else
+            warn("⚠️ Failed to list pet:", err)
+        end
+        
+        ::continue::
     end
+end
+
+-- ========== MAIN EXECUTION ==========
+local function Main()
+    -- Setup anti-AFK
+    if Config.AntiAFK then
+        for _, conn in pairs(getconnections(LocalPlayer.Idled)) do conn:Disable() end
+        LocalPlayer.Idled:Connect(function()
+            VirtualUser:ClickButton2(Vector2.new(math.random(0,1000), math.random(0,1000)))
+        end)
+    end
+    
+    -- Travel to plaza if needed
+    if Config.AutoTravelToPlaza then
+        local success = pcall(function()
+            Network.Invoke("Travel to Trading Plaza")
+        end)
+        task.wait(5)
+    end
+    
+    -- Setup booth
+    if not SetupBooth() then return end
+    
+    -- Start selling
+    SellHugePets()
+end
+
+-- Start the script
+local success, err = pcall(Main)
+if not success then
+    warn("Critical error:", err)
 end
